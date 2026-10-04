@@ -1,0 +1,19 @@
+{
+  "name": "@foomlabglobal/auth",
+  "version": "1.0.0",
+  "description": "Access-token verification and client-credentials helper for Foom services",
+  "main": "index.js",
+  "files": [
+    "index.js"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "jose": "^5.10.0"
+  }
+}
