@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const http = require("node:http");
 const { after, before, test } = require("node:test");
 const { SignJWT, exportJWK, generateKeyPair } = require("jose");
-const { clientCredentials, createTokenVerifier } = require("..");
+const { clientCredentials, createAccountProvisioner, createTokenVerifier } = require("..");
 
 const servers = [];
 let realmA;
@@ -135,4 +135,75 @@ test("clientCredentials surfaces HTTP errors", async () => {
   });
   const getToken = clientCredentials({ tokenUrl: `${base}/token`, clientId: "c", clientSecret: "bad" });
   await assert.rejects(getToken(), /HTTP 401/);
+});
+
+// Minimal in-memory Keycloak admin API: token endpoint, users, organizations.
+async function fakeKeycloak() {
+  const state = { users: [], orgs: [], members: [], emails: [] };
+  const base = await listen((req, res) => {
+    let data = "";
+    req.on("data", (c) => (data += c));
+    req.on("end", () => {
+      const url = new URL(req.url, "http://x");
+      const body = data ? JSON.parse(data.startsWith("grant") ? "{}" : data) : null;
+      const send = (status, json) => {
+        res.statusCode = status;
+        res.setHeader("Content-Type", "application/json");
+        res.end(json === undefined ? "" : JSON.stringify(json));
+      };
+      const p = url.pathname;
+      if (p.endsWith("/protocol/openid-connect/token")) return send(200, { access_token: "admin", expires_in: 300 });
+      if (req.headers.authorization !== "Bearer admin") return send(401, {});
+      if (p === "/admin/realms/partner/users" && req.method === "GET")
+        return send(200, state.users.filter((u) => u.email === url.searchParams.get("email")));
+      if (p === "/admin/realms/partner/users" && req.method === "POST") {
+        state.users.push({ id: `u${state.users.length + 1}`, ...body });
+        return send(201);
+      }
+      if (p === "/admin/realms/partner/organizations" && req.method === "GET") return send(200, state.orgs);
+      if (p === "/admin/realms/partner/organizations" && req.method === "POST") {
+        state.orgs.push({ id: `o${state.orgs.length + 1}`, ...body });
+        return send(201);
+      }
+      const members = p.match(/^\/admin\/realms\/partner\/organizations\/(\w+)\/members$/);
+      if (members) {
+        state.members.push([members[1], body]);
+        return send(201);
+      }
+      const email = p.match(/^\/admin\/realms\/partner\/users\/(\w+)\/execute-actions-email$/);
+      if (email) {
+        state.emails.push([email[1], body]);
+        return send(204);
+      }
+      send(404, {});
+    });
+  });
+  return { base, state };
+}
+
+test("provisionAccount creates, joins the organization and invites; re-running reuses", async () => {
+  const { base, state } = await fakeKeycloak();
+  const provision = createAccountProvisioner({ adminUrl: base, clientId: "app-provisioner", secrets: { partner: "s" } });
+  const input = { realm: "partner", email: "ops@acme.com", name: "Ops Team Lead", organization: { name: "Acme", alias: "acme" } };
+
+  assert.deepEqual(await provision(input), { realm: "partner", created: true, invited: true });
+  assert.equal(state.users[0].firstName, "Ops");
+  assert.equal(state.users[0].lastName, "Team Lead");
+  assert.deepEqual(state.orgs.map((o) => o.alias), ["acme"]);
+  assert.deepEqual(state.members, [["o1", "u1"]]);
+  assert.equal(state.emails.length, 1);
+
+  // Finished setup: no new account, org reused, no email.
+  state.users[0].requiredActions = [];
+  assert.deepEqual(await provision(input), { realm: "partner", created: false, invited: false });
+  assert.equal(state.users.length, 1);
+  assert.equal(state.orgs.length, 1);
+  assert.equal(state.emails.length, 1);
+});
+
+test("provisionAccount surfaces Keycloak errors with their status", async () => {
+  const { base } = await fakeKeycloak();
+  const provision = createAccountProvisioner({ adminUrl: base, clientId: "c", secrets: { workforce: "s" } });
+  await assert.rejects(provision({ realm: "workforce", email: "a@b.c", name: "A" }), { status: 404 });
+  await assert.rejects(provision({ realm: "partner", email: "a@b.c", name: "A" }), /no secret for realm partner/);
 });
