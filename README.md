@@ -1,16 +1,17 @@
 # @foomlabglobal/auth
 
-Two helpers every Foom service uses to talk to the central IdP (Keycloak):
+Helpers every Foom service uses to talk to the central IdP (Keycloak):
 
 - `createTokenVerifier` — verify access tokens (ES256, pinned issuer + audience, JWKS fetched and cached).
 - `clientCredentials` — get a service-to-service token, cached until 60 s before expiry.
+- `createAccountProvisioner` — create a person's Keycloak account from an app and email them the setup link.
 
 Plain CommonJS, no build step. Works from both `require` and `import`. Node ≥ 18.
 
 ## Install
 
 ```json
-"@foomlabglobal/auth": "github:foomlabglobal/auth#v1.0.0"
+"@foomlabglobal/auth": "github:foomlabglobal/auth#v1.1.0"
 ```
 
 Public repo, so `npm ci` needs no credentials. The lockfile pins the exact commit.
@@ -50,6 +51,29 @@ const getToken = clientCredentials({
 
 await axios.get(url, { headers: { Authorization: `Bearer ${await getToken()}` } });
 ```
+
+## Create accounts from an app
+
+```js
+const { createAccountProvisioner } = require("@foomlabglobal/auth");
+
+const provisionAccount = createAccountProvisioner({
+  adminUrl: process.env.AUTH_ADMIN_URL, // reached from inside: the public hostname blocks /admin
+  clientId: "<app>-provisioner",        // same client id in each realm
+  secrets: { workforce: process.env.AUTH_PROVISIONER_WORKFORCE_SECRET },
+});
+
+const { created, invited } = await provisionAccount({
+  realm: "workforce",
+  email: "a@example.com",
+  name: "Full Name",
+  organization: { name: "Acme", alias: "acme" }, // optional: ensure the Organization and add the person
+});
+```
+
+- An existing account with the same email is reused. The setup email (`VERIFY_EMAIL`, `UPDATE_PASSWORD`, `CONFIGURE_TOTP`, valid 3 days) is sent only for new accounts and ones that haven't finished setup. Safe to re-run.
+- Throws on Keycloak failures; `error.status` is the HTTP status when Keycloak answered.
+- The provisioner client needs `manage-users`, `view-users`, `query-users` in its realm, plus `manage-realm` when it manages Organizations (Keycloak 26).
 
 ## Rules for this repo
 
