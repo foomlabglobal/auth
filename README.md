@@ -68,10 +68,11 @@ const { created, invited } = await provisionAccount({
   email: "a@example.com",
   name: "Full Name",
   organization: { name: "Acme", alias: "acme" }, // optional: ensure the Organization and add the person
+  mfa: false, // optional, default true: false leaves TOTP out of the setup email (realm where 2FA is optional)
 });
 ```
 
-- An existing account with the same email is reused. The setup email (`VERIFY_EMAIL`, `UPDATE_PASSWORD`, `CONFIGURE_TOTP`, valid 3 days) is sent only for new accounts and ones that haven't finished setup. Safe to re-run.
+- An existing account with the same email is reused. The setup email (`VERIFY_EMAIL`, `UPDATE_PASSWORD`, plus `CONFIGURE_TOTP` unless `mfa: false`; valid 3 days) is sent only for new accounts and ones that haven't finished setup. Safe to re-run.
 - Throws on Keycloak failures; `error.status` is the HTTP status when Keycloak answered.
 - The provisioner client needs `manage-users`, `view-users`, `query-users` in its realm, plus `manage-realm` when it manages Organizations (Keycloak 26).
 

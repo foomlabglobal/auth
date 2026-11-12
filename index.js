@@ -102,7 +102,7 @@ function clientCredentials({ tokenUrl, clientId, clientSecret }) {
   };
 }
 
-const SETUP_ACTIONS = ["VERIFY_EMAIL", "UPDATE_PASSWORD", "CONFIGURE_TOTP"];
+const SETUP_ACTIONS = ["VERIFY_EMAIL", "UPDATE_PASSWORD"];
 const INVITE_LIFESPAN_SECONDS = 3 * 24 * 60 * 60;
 
 /**
@@ -113,7 +113,9 @@ const INVITE_LIFESPAN_SECONDS = 3 * 24 * 60 * 60;
  *   usually blocks /admin).
  * clientId: the provisioner client, same id in every realm.
  * secrets: { [realmName]: clientSecret }
- * Returns provisionAccount({ realm, email, name, organization? })
+ * Returns provisionAccount({ realm, email, name, organization?, mfa? })
+ *   mfa (default true): the setup email also enrolls TOTP. Pass false for a
+ *   realm where the second factor is optional.
  *   -> { realm, created, invited }. Errors carry `.status` when Keycloak
  *   answered with an HTTP error.
  */
@@ -170,7 +172,7 @@ function createAccountProvisioner({ adminUrl, clientId, secrets }) {
     return (await response.json())[0] ?? null;
   }
 
-  async function createUser(realm, { email, name }) {
+  async function createUser(realm, { email, name }, setupActions) {
     // Many people have a single name; last name stays empty then.
     const [firstName, ...rest] = name.trim().split(/\s+/);
     await adminFetch(realm, "/users", {
@@ -181,7 +183,7 @@ function createAccountProvisioner({ adminUrl, clientId, secrets }) {
         firstName,
         lastName: rest.join(" "),
         enabled: true,
-        requiredActions: SETUP_ACTIONS,
+        requiredActions: setupActions,
       },
     });
     return findUser(realm, email);
@@ -210,11 +212,20 @@ function createAccountProvisioner({ adminUrl, clientId, secrets }) {
    * `organization`, matched by alias, when given), and emails them the setup
    * link if they haven't finished setting up. Re-running is safe.
    */
-  return async function provisionAccount({ realm, email, name, organization }) {
+  return async function provisionAccount({
+    realm,
+    email,
+    name,
+    organization,
+    mfa = true,
+  }) {
+    const setupActions = mfa
+      ? [...SETUP_ACTIONS, "CONFIGURE_TOTP"]
+      : SETUP_ACTIONS;
     let user = await findUser(realm, email);
     const created = !user;
     if (created) {
-      user = await createUser(realm, { email, name });
+      user = await createUser(realm, { email, name }, setupActions);
     }
 
     if (organization) {
@@ -231,7 +242,7 @@ function createAccountProvisioner({ adminUrl, clientId, secrets }) {
       await adminFetch(
         realm,
         `/users/${user.id}/execute-actions-email?lifespan=${INVITE_LIFESPAN_SECONDS}`,
-        { method: "PUT", body: SETUP_ACTIONS }
+        { method: "PUT", body: setupActions }
       );
     }
 

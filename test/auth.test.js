@@ -192,6 +192,7 @@ test("provisionAccount creates, joins the organization and invites; re-running r
   assert.deepEqual(state.orgs.map((o) => o.alias), ["acme"]);
   assert.deepEqual(state.members, [["o1", "u1"]]);
   assert.equal(state.emails.length, 1);
+  assert.deepEqual(state.emails[0][1], ["VERIFY_EMAIL", "UPDATE_PASSWORD", "CONFIGURE_TOTP"]);
 
   // Finished setup: no new account, org reused, no email.
   state.users[0].requiredActions = [];
@@ -199,6 +200,14 @@ test("provisionAccount creates, joins the organization and invites; re-running r
   assert.equal(state.users.length, 1);
   assert.equal(state.orgs.length, 1);
   assert.equal(state.emails.length, 1);
+});
+
+test("provisionAccount with mfa: false leaves TOTP out of setup", async () => {
+  const { base, state } = await fakeKeycloak();
+  const provision = createAccountProvisioner({ adminUrl: base, clientId: "c", secrets: { partner: "s" } });
+  await provision({ realm: "partner", email: "a@b.c", name: "A", mfa: false });
+  assert.deepEqual(state.users[0].requiredActions, ["VERIFY_EMAIL", "UPDATE_PASSWORD"]);
+  assert.deepEqual(state.emails[0][1], ["VERIFY_EMAIL", "UPDATE_PASSWORD"]);
 });
 
 test("provisionAccount surfaces Keycloak errors with their status", async () => {
